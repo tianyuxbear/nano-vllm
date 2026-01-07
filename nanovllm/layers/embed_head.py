@@ -1,28 +1,29 @@
 import torch
-from torch import nn
-import torch.nn.functional as F
 import torch.distributed as dist
+import torch.nn.functional as F
+from torch import nn
 
 from nanovllm.utils.context import get_context
 
 
 class VocabParallelEmbedding(nn.Module):
-
     def __init__(
         self,
         num_embeddings: int,
         embedding_dim: int,
     ):
         super().__init__()
-        self.tp_rank = dist.get_rank()
-        self.tp_size = dist.get_world_size()
+        self.tp_rank = dist.get_rank()  # ty: ignore
+        self.tp_size = dist.get_world_size()  # ty: ignore
         assert num_embeddings % self.tp_size == 0
         self.num_embeddings = num_embeddings
         self.num_embeddings_per_partition = self.num_embeddings // self.tp_size
         self.vocab_start_idx = self.num_embeddings_per_partition * self.tp_rank
         self.vocab_end_idx = self.vocab_start_idx + self.num_embeddings_per_partition
-        self.weight = nn.Parameter(torch.empty(self.num_embeddings_per_partition, embedding_dim))
-        self.weight.weight_loader = self.weight_loader
+        self.weight = nn.Parameter(
+            torch.empty(self.num_embeddings_per_partition, embedding_dim)
+        )
+        self.weight.weight_loader = self.weight_loader  # ty: ignore
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
@@ -38,12 +39,11 @@ class VocabParallelEmbedding(nn.Module):
         y = F.embedding(x, self.weight)
         if self.tp_size > 1:
             y = mask.unsqueeze(1) * y
-            dist.all_reduce(y)
+            dist.all_reduce(y)  # ty: ignore
         return y
 
 
 class ParallelLMHead(VocabParallelEmbedding):
-
     def __init__(
         self,
         num_embeddings: int,
@@ -60,7 +60,11 @@ class ParallelLMHead(VocabParallelEmbedding):
             x = x[last_indices].contiguous()
         logits = F.linear(x, self.weight)
         if self.tp_size > 1:
-            all_logits = [torch.empty_like(logits) for _ in range(self.tp_size)] if self.tp_rank == 0 else None
-            dist.gather(logits, all_logits, 0)
+            all_logits = (
+                [torch.empty_like(logits) for _ in range(self.tp_size)]
+                if self.tp_rank == 0
+                else None
+            )
+            dist.gather(logits, all_logits, 0)  # ty: ignore
             logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
         return logits
